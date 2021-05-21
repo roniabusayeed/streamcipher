@@ -18,6 +18,12 @@ public:
     /** Add bytes to the cipher object. */
     void add(const byte_t* buffer, size_t size)
     {
+        //  Avoid redundant memory allocations and copying if size is passed 0.
+        if (! size)
+        {
+            return;
+        }
+
         // Reallocate enough memory to add cipher of given buffer.
         byte_t* temp = new byte_t[m_size + size];
         memcpy(temp, m_cipher, m_size);
@@ -152,29 +158,19 @@ int main(int argc, char** argv)
     // Read input file incrementally.
     const size_t chunk_size = 256;
     arcipher_t::byte_t* chunk = new arcipher_t::byte_t[chunk_size];
-    while (infile.read((char*)chunk, chunk_size))
-    {
-        arcipher.add(chunk, chunk_size);
+    std::size_t bytes_read;
+    do {
+        bytes_read = infile.read((char*)chunk, chunk_size).gcount();
+        arcipher.add(chunk, bytes_read);
 
         // Write output incrementally.
+        // TODO: Avoid copying. Write directly from the cipher object.
         size_t buffer_size = arcipher.size();
         arcipher_t::byte_t* out = new arcipher_t::byte_t[buffer_size];
         arcipher.dump(out, NULL);
         outfile.write((const char*)out, buffer_size);
         delete[] out;
-    }
-    size_t remainder_bytes = infile.gcount();
-    if (remainder_bytes)
-    {
-        arcipher.add(chunk, remainder_bytes);
-
-        // Write output incrementally.
-        size_t buffer_size = arcipher.size();
-        arcipher_t::byte_t* out = new arcipher_t::byte_t[buffer_size];
-        arcipher.dump(out, NULL);
-        outfile.write((const char*)out, buffer_size);
-        delete[] out;
-    }
+    } while (bytes_read > 0);
     delete[] chunk;
     
     // Close files.
