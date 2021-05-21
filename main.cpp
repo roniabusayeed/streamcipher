@@ -91,23 +91,51 @@ public:
     /** Returns the current size of the cipher buffer (internal) in bytes. */
     size_t size() const { return m_size; }
 
-    /** Writes cipher to buffer and flushes internal buffer. */
+    /** Writes cipher to buffer and flushes internal buffer.
+     * If size is not nullptr, it sets *size to the number of bytes 
+     * dumped so far since the last reset call. */
     void dump(byte_t* buffer, size_t* size)
     {
         // Write cipher to buffer.
         memcpy(buffer, m_cipher, m_size);
 
         // Flush internal buffer.
-        delete[] m_cipher;
-        m_cipher = nullptr;
-        m_size = 0;
+        flush();
 
-        // set size is no NULL, it's set to total number of SRN generator calls 
-        // (which equals the total number of encrypted bytes so far).
+        // If size is not nullptr set it to the total number of SRN generator
+        // calls (which equals the total number of encrypted bytes so far).
         if (size)
         {
             *size = m_engine_cursor;
         }
+    }
+
+    /** Writes cipher to the fout stream and flushes internal buffer.
+     * If used incrementally, make sure to open fout in append mode.
+     * If size is not nullptr, it sets *size to the number of bytes 
+     * dumped so far since the last reset call. */
+    void dump(std::ofstream& fout, size_t* size)
+    {
+        // Write cipher to file.
+        fout.write((const char*)m_cipher, m_size);
+
+        // Flush internal buffer
+        flush();
+
+        // If size is not nullptr set it to the total number of SRN generator
+        // calls (which equals the total number of encrypted bytes so far).
+        if (size)
+        {
+            *size = m_engine_cursor;
+        }
+    }
+
+    /** Flushes internal buffer. */
+    void flush()
+    {
+        delete[] m_cipher;
+        m_cipher = nullptr;
+        m_size = 0;
     }
 
     /** Destructor. */
@@ -149,13 +177,14 @@ int main(int argc, char** argv)
     }
 
     // Open output file for reading.
-    std::ofstream outfile("output", std::ios::out | std::ios::binary);
+    std::ofstream outfile("output", std::ios::out | std::ios::app | std::ios::binary);
 
     // Create a cipher object.
     arcipher_t arcipher;
     arcipher.reset(keyword.c_str(), keyword.size());
 
     // Read input file incrementally.
+    size_t bytes_encrypted = 0;
     const size_t chunk_size = 256;
     arcipher_t::byte_t* chunk = new arcipher_t::byte_t[chunk_size];
     std::size_t bytes_read;
@@ -164,18 +193,16 @@ int main(int argc, char** argv)
         arcipher.add(chunk, bytes_read);
 
         // Write output incrementally.
-        // TODO: Avoid copying. Write directly from the cipher object.
-        size_t buffer_size = arcipher.size();
-        arcipher_t::byte_t* out = new arcipher_t::byte_t[buffer_size];
-        arcipher.dump(out, NULL);
-        outfile.write((const char*)out, buffer_size);
-        delete[] out;
+        arcipher.dump(outfile, &bytes_encrypted);
     } while (bytes_read > 0);
     delete[] chunk;
     
     // Close files.
     outfile.close();
     infile.close();
+
+    // Display confirmation.
+    std::cout << bytes_encrypted << " bytes encrypted/decrypted" << std::endl;
 
     return 0;
 }
