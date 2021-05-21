@@ -13,7 +13,7 @@ public:
 
     /** default constuctor. */ 
     arcipher_t()
-    : m_cipher(nullptr), m_size(0) {}
+    : m_cipher(nullptr), m_size(0), m_engine_cursor(0) {}
 
     /** Add bytes to the cipher object. */
     void add(const byte_t* buffer, size_t size)
@@ -30,9 +30,9 @@ public:
         for (size_t i = 0; i < size; i++)
         {
             // Compute cipher and store in m_cipher buffer character by character.
-            m_cipher[m_size] = 
-            buffer[i] ^ dist(mt_engines[m_size % block_count]);
-            m_size++;
+            m_cipher[m_size++] = 
+            buffer[i] ^ dist(mt_engines[m_engine_cursor % block_count]);
+            m_engine_cursor++;
         }
     }
 
@@ -43,7 +43,10 @@ public:
         delete[] m_cipher;
         m_cipher = nullptr;
 
-        // Reset size.
+        // Reset m_engine_cursor.
+        m_engine_cursor = 0;
+
+        // Reset m_size.
         m_size = 0;
 
         // Reset all SRN generators.
@@ -60,8 +63,11 @@ public:
         delete[] m_cipher;
         m_cipher = nullptr;
 
-        // Reset size.
+        // Reset m_size.
         m_size = 0;
+
+        // Reset m_engine_cursor.
+        m_engine_cursor = 0;
 
         // Calculate seed for all SRN generators.
         SHA256 sha256;
@@ -76,15 +82,26 @@ public:
         }
     }
 
-    /** Returns the current size of the cipher in bytes. */
+    /** Returns the current size of the cipher buffer (internal) in bytes. */
     size_t size() const { return m_size; }
 
-    /** Writes cipher to buffer */
-    void get_cipher(byte_t* buffer, size_t* size) const
+    /** Writes cipher to buffer and flushes internal buffer. */
+    void dump(byte_t* buffer, size_t* size)
     {
+        // Write cipher to buffer.
         memcpy(buffer, m_cipher, m_size);
+
+        // Flush internal buffer.
+        delete[] m_cipher;
+        m_cipher = nullptr;
+        m_size = 0;
+
+        // set size is no NULL, it's set to total number of SRN generator calls 
+        // (which equals the total number of encrypted bytes so far).
         if (size)
-            *size = m_size;
+        {
+            *size = m_engine_cursor;
+        }
     }
 
     /** Destructor. */
@@ -94,11 +111,13 @@ public:
     } 
 
 private:
-    byte_t* m_cipher;   // Buffer containing the ciper.
-    size_t m_size;      // Size of the cipher in bytes.
-    static const size_t block_count = SHA256::HashBytes/sizeof(uint32_t);
-
-    std::mt19937 mt_engines[block_count];    // SRN generators.
+    byte_t* m_cipher;                           // Buffer containing the ciper.
+    size_t m_size;                              // Size of current cipher buffer in memory.
+    size_t m_engine_cursor;                     // Total number of SRN generator/engine call
+                                                // since last reset call.
+    static const size_t block_count = 
+        SHA256::HashBytes/sizeof(uint32_t);
+    std::mt19937 mt_engines[block_count];       // SRN generators.
 };
 
 
@@ -136,23 +155,31 @@ int main(int argc, char** argv)
     while (infile.read((char*)chunk, chunk_size))
     {
         arcipher.add(chunk, chunk_size);
+
+        // Write output incrementally.
+        size_t buffer_size = arcipher.size();
+        arcipher_t::byte_t* out = new arcipher_t::byte_t[buffer_size];
+        arcipher.dump(out, NULL);
+        outfile.write((const char*)out, buffer_size);
+        delete[] out;
     }
     size_t remainder_bytes = infile.gcount();
     if (remainder_bytes)
     {
         arcipher.add(chunk, remainder_bytes);
+
+        // Write output incrementally.
+        size_t buffer_size = arcipher.size();
+        arcipher_t::byte_t* out = new arcipher_t::byte_t[buffer_size];
+        arcipher.dump(out, NULL);
+        outfile.write((const char*)out, buffer_size);
+        delete[] out;
     }
     delete[] chunk;
     
-    // Write output.
-    arcipher_t::byte_t* out = new arcipher_t::byte_t[arcipher.size()];
-    arcipher.get_cipher(out, NULL);
-    outfile.write((const char*)out, arcipher.size());
-
-    // Free memory.
-    delete[] out;
-
     // Close files.
     outfile.close();
     infile.close();
+
+    return 0;
 }
